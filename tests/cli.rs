@@ -90,6 +90,28 @@ fn selects_columns() {
 }
 
 #[test]
+fn prints_column_stats() {
+    let path = std::env::temp_dir().join(format!("csv-peek-stats-{}", std::process::id()));
+    std::fs::write(&path, "name,age\nann,10\nbob,\ncara,30\n").unwrap();
+    let out = run(&["--stats", "-w", "80", path.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "\
+rows: 3
+column  type     empty  distinct  min  max  mean
+name    string   0      3
+age     integer  1      2         10   30   20
+"
+    );
+}
+
+#[test]
 fn missing_column_fails() {
     let path = std::env::temp_dir().join(format!("csv-peek-missing-{}", std::process::id()));
     std::fs::write(&path, "name,age\nann,3\n").unwrap();
@@ -117,4 +139,5 @@ fn help_lists_the_row_limit() {
     assert!(text.contains("--rows"), "{text}");
     assert!(text.contains("--delimiter"), "{text}");
     assert!(text.contains("--cols"), "{text}");
+    assert!(text.contains("--stats"), "{text}");
 }

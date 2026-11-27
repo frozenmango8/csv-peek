@@ -3,6 +3,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 mod sniff;
+mod stats;
 mod table;
 
 const SAMPLE: usize = 64 * 1024;
@@ -16,6 +17,7 @@ pub struct Config {
     pub has_header: bool,
     pub width: usize,
     pub columns: Option<Vec<String>>,
+    pub stats: bool,
 }
 
 impl Default for Config {
@@ -26,6 +28,7 @@ impl Default for Config {
             has_header: true,
             width: 80,
             columns: None,
+            stats: false,
         }
     }
 }
@@ -82,16 +85,41 @@ impl From<csv::Error> for Error {
 pub fn run<R: Read, W: Write>(input: R, output: &mut W, cfg: &Config) -> Result<(), Error> {
     let mut sheet = open(input, cfg.delimiter, cfg.has_header)?;
     if sheet.headers.is_empty() {
+        if cfg.stats {
+            writeln!(output, "rows: 0")?;
+        }
         return Ok(());
     }
     let idxs = match &cfg.columns {
         Some(spec) => select_columns(&sheet.headers, spec)?,
         None => (0..sheet.headers.len()).collect(),
     };
+    if cfg.stats {
+        return write_stats(&mut sheet, output, &idxs, cfg.width);
+    }
     let header = project_names(&sheet.headers, &idxs);
     let rows = collect_rows(&mut sheet, &idxs, cfg.rows)?;
     let rendered = table::render(&header, &rows, cfg.width);
     output.write_all(rendered.as_bytes())?;
+    Ok(())
+}
+
+fn write_stats<R: Read, W: Write>(
+    sheet: &mut Sheet<R>,
+    output: &mut W,
+    idxs: &[usize],
+    width: usize,
+) -> Result<(), Error> {
+    let names = project_names(&sheet.headers, idxs);
+    let mut summary = stats::Summary::new(&names);
+    if let Some(rec) = sheet.pending.take() {
+        summary.observe(&rec, idxs);
+    }
+    let mut rec = csv::StringRecord::new();
+    while sheet.reader.read_record(&mut rec)? {
+        summary.observe(&rec, idxs);
+    }
+    output.write_all(summary.render(width).as_bytes())?;
     Ok(())
 }
 
@@ -328,6 +356,61 @@ mod tests {
     #[test]
     fn empty_input_prints_nothing() {
         assert_eq!(preview(b"", Config::default()), "");
+        let cfg = Config {
+            stats: true,
+            ..Config::default()
+        };
+        assert_eq!(preview(b"", cfg), "rows: 0\n");
+    }
+
+    #[test]
+    fn stats_reports_type_empty_and_range() {
+        let data = b"\
+name,age,score,ok,note
+ann,10,1.5,true,
+bob,,2.5,false,x
+cara,30,3.5,true,
+";
+        let cfg = Config {
+            stats: true,
+            ..Config::default()
+        };
+        assert_eq!(
+            preview(data, cfg),
+            "\
+rows: 3
+column  type     empty  distinct  min  max  mean
+name    string   0      3
+age     integer  1      2         10   30   20
+score   float    0      3         1.5  3.5  2.5
+ok      boolean  0      2
+note    string   2      1
+"
+        );
+    }
+
+    #[test]
+    fn stats_can_limit_columns() {
+        let cfg = Config {
+            stats: true,
+            columns: Some(vec!["score".into(), "age".into()]),
+            ..Config::default()
+        };
+        let out = preview(b"name,age,score\nann,10,1.5\n", cfg);
+        assert!(out.contains("score"), "{out}");
+        assert!(out.contains("age"), "{out}");
+        assert!(!out.contains("name"), "{out}");
+    }
+
+    #[test]
+    fn stats_ignores_the_preview_row_limit() {
+        let cfg = Config {
+            stats: true,
+            rows: 1,
+            ..Config::default()
+        };
+        let out = preview(b"n\n1\n2\n3\n", cfg);
+        assert!(out.starts_with("rows: 3\n"), "{out}");
     }
 
     struct CountingRead {
@@ -372,5 +455,32 @@ mod tests {
         assert!(bytes.get() <= SAMPLE, "read {} bytes", bytes.get());
         let text = String::from_utf8(out).unwrap();
         assert_eq!(text.lines().count(), 3);
+    }
+
+    #[test]
+    fn stats_reads_past_the_sample() {
+        let mut data = String::from("n\n");
+        for i in 0..20_000 {
+            data.push_str(&format!("{i}\n"));
+        }
+        let data = data.into_bytes();
+        assert!(data.len() > SAMPLE);
+        let len = data.len();
+        let bytes = Rc::new(Cell::new(0));
+        let src = CountingRead {
+            data,
+            pos: 0,
+            bytes: Rc::clone(&bytes),
+        };
+        let cfg = Config {
+            stats: true,
+            ..Config::default()
+        };
+        let mut out = Vec::new();
+        run(src, &mut out, &cfg).unwrap();
+        assert_eq!(bytes.get(), len);
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.starts_with("rows: 20000\n"), "{text}");
+        assert!(text.contains('~'), "{text}");
     }
 }

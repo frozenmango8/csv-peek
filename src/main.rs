@@ -8,7 +8,7 @@ use clap::Parser;
 use csv_peek::{Config, Error};
 
 #[derive(Parser)]
-#[command(version, about = "Preview CSV files from the terminal")]
+#[command(version, about = "Preview CSV files and summarize columns")]
 struct Args {
     /// CSV file to read. Omit, or pass -, to read stdin.
     #[arg(value_name = "FILE")]
@@ -29,6 +29,10 @@ struct Args {
     /// Comma-separated column names or 1-based indexes.
     #[arg(long, value_name = "LIST")]
     cols: Option<String>,
+
+    /// Print per-column stats instead of a preview.
+    #[arg(long)]
+    stats: bool,
 
     /// Treat the first row as data, not a header.
     #[arg(long)]
@@ -57,6 +61,7 @@ fn try_main() -> Result<(), Error> {
         has_header: !args.no_header,
         width: resolve_width(args.width),
         columns: args.cols.as_deref().map(parse_cols).transpose()?,
+        stats: args.stats,
     };
     let input = open_input(args.file)?;
     let stdout = io::stdout();
