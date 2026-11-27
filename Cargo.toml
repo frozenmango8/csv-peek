@@ -1,0 +1,14 @@
+[package]
+name = "csv-peek"
+version = "0.1.0"
+edition = "2021"
+description = "Preview CSV files and summarize columns from the terminal"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/frozenmango8/csv-peek"
+categories = ["command-line-utilities"]
+keywords = ["csv", "cli"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+csv = "1.3"
