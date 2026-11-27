@@ -73,6 +73,34 @@ fn truncates_long_cells_to_the_width() {
 }
 
 #[test]
+fn selects_columns() {
+    let path = std::env::temp_dir().join(format!("csv-peek-cols-{}", std::process::id()));
+    std::fs::write(&path, "name,age,city\nann,3,paris\n").unwrap();
+    let out = run(&["--cols", "city, name", "-w", "40", path.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "city   name\nparis  ann\n"
+    );
+}
+
+#[test]
+fn missing_column_fails() {
+    let path = std::env::temp_dir().join(format!("csv-peek-missing-{}", std::process::id()));
+    std::fs::write(&path, "name,age\nann,3\n").unwrap();
+    let out = run(&["--cols", "nope", path.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&path);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("column not found: nope"), "{err}");
+}
+
+#[test]
 fn missing_file_is_an_error() {
     let out = run(&["does-not-exist.csv"]);
     assert!(!out.status.success());
@@ -88,4 +116,5 @@ fn help_lists_the_row_limit() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("--rows"), "{text}");
     assert!(text.contains("--delimiter"), "{text}");
+    assert!(text.contains("--cols"), "{text}");
 }

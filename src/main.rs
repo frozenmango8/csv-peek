@@ -26,6 +26,10 @@ struct Args {
     #[arg(short = 'w', long, value_name = "COLS")]
     width: Option<usize>,
 
+    /// Comma-separated column names or 1-based indexes.
+    #[arg(long, value_name = "LIST")]
+    cols: Option<String>,
+
     /// Treat the first row as data, not a header.
     #[arg(long)]
     no_header: bool,
@@ -52,11 +56,25 @@ fn try_main() -> Result<(), Error> {
         delimiter: args.delimiter,
         has_header: !args.no_header,
         width: resolve_width(args.width),
+        columns: args.cols.as_deref().map(parse_cols).transpose()?,
     };
     let input = open_input(args.file)?;
     let stdout = io::stdout();
     let mut out = stdout.lock();
     csv_peek::run(input, &mut out, &cfg)
+}
+
+fn parse_cols(raw: &str) -> Result<Vec<String>, Error> {
+    let cols: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if cols.is_empty() {
+        return Err(Error::new("no columns selected"));
+    }
+    Ok(cols)
 }
 
 fn resolve_width(flag: Option<usize>) -> usize {
@@ -107,7 +125,7 @@ fn parse_delimiter(raw: &str) -> Result<u8, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_delimiter;
+    use super::{parse_cols, parse_delimiter};
 
     #[test]
     fn parses_common_delimiters() {
@@ -117,6 +135,12 @@ mod tests {
         assert_eq!(parse_delimiter(r"\t").unwrap(), b'\t');
         assert_eq!(parse_delimiter("tab").unwrap(), b'\t');
         assert_eq!(parse_delimiter("\t").unwrap(), b'\t');
+    }
+
+    #[test]
+    fn parses_a_column_list() {
+        assert_eq!(parse_cols("a, b").unwrap(), vec!["a", "b"]);
+        assert!(parse_cols(" , ").is_err());
     }
 
     #[test]

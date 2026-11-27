@@ -15,6 +15,7 @@ pub struct Config {
     pub delimiter: Option<u8>,
     pub has_header: bool,
     pub width: usize,
+    pub columns: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -24,6 +25,7 @@ impl Default for Config {
             delimiter: None,
             has_header: true,
             width: 80,
+            columns: None,
         }
     }
 }
@@ -35,6 +37,13 @@ pub struct Error {
 }
 
 impl Error {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            pipe: false,
+        }
+    }
+
     pub fn is_broken_pipe(&self) -> bool {
         self.pipe
     }
@@ -75,7 +84,10 @@ pub fn run<R: Read, W: Write>(input: R, output: &mut W, cfg: &Config) -> Result<
     if sheet.headers.is_empty() {
         return Ok(());
     }
-    let idxs: Vec<usize> = (0..sheet.headers.len()).collect();
+    let idxs = match &cfg.columns {
+        Some(spec) => select_columns(&sheet.headers, spec)?,
+        None => (0..sheet.headers.len()).collect(),
+    };
     let header = project_names(&sheet.headers, &idxs);
     let rows = collect_rows(&mut sheet, &idxs, cfg.rows)?;
     let rendered = table::render(&header, &rows, cfg.width);
@@ -142,6 +154,24 @@ fn normalize_headers(names: Vec<String>) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn select_columns(headers: &[String], spec: &[String]) -> Result<Vec<usize>, Error> {
+    let mut idxs = Vec::with_capacity(spec.len());
+    for col in spec {
+        if let Some(i) = headers.iter().position(|h| h == col) {
+            idxs.push(i);
+            continue;
+        }
+        if let Ok(n) = col.parse::<usize>() {
+            if n > 0 && n <= headers.len() {
+                idxs.push(n - 1);
+                continue;
+            }
+        }
+        return Err(Error::new(format!("column not found: {col}")));
+    }
+    Ok(idxs)
 }
 
 fn project_names(headers: &[String], idxs: &[usize]) -> Vec<String> {
@@ -254,6 +284,45 @@ mod tests {
     fn blank_header_gets_an_index() {
         let out = preview(b"name,,city\nann,x,paris\n", Config::default());
         assert_eq!(out, "name  2  city\nann   x  paris\n");
+    }
+
+    #[test]
+    fn selects_columns_by_name_or_index() {
+        let data = b"name,age,city\nann,3,paris\nbob,4,rome\n";
+        let by_name = Config {
+            columns: Some(vec!["city".into(), "name".into()]),
+            ..Config::default()
+        };
+        assert_eq!(
+            preview(data, by_name),
+            "city   name\nparis  ann\nrome   bob\n"
+        );
+        let by_index = Config {
+            columns: Some(vec!["2".into()]),
+            ..Config::default()
+        };
+        assert_eq!(preview(data, by_index), "age\n3\n4\n");
+    }
+
+    #[test]
+    fn a_name_wins_over_the_same_index() {
+        let data = b"age,1\n3,x\n";
+        let cfg = Config {
+            columns: Some(vec!["1".into()]),
+            ..Config::default()
+        };
+        assert_eq!(preview(data, cfg), "1\nx\n");
+    }
+
+    #[test]
+    fn missing_column_is_an_error() {
+        let mut out = Vec::new();
+        let cfg = Config {
+            columns: Some(vec!["nope".into()]),
+            ..Config::default()
+        };
+        let err = run(b"name,age\nann,3\n" as &[u8], &mut out, &cfg).unwrap_err();
+        assert_eq!(err.to_string(), "column not found: nope");
     }
 
     #[test]
