@@ -3,6 +3,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 mod sniff;
+mod table;
 
 const SAMPLE: usize = 64 * 1024;
 
@@ -13,6 +14,7 @@ pub struct Config {
     pub rows: usize,
     pub delimiter: Option<u8>,
     pub has_header: bool,
+    pub width: usize,
 }
 
 impl Default for Config {
@@ -21,6 +23,7 @@ impl Default for Config {
             rows: 10,
             delimiter: None,
             has_header: true,
+            width: 80,
         }
     }
 }
@@ -75,7 +78,8 @@ pub fn run<R: Read, W: Write>(input: R, output: &mut W, cfg: &Config) -> Result<
     let idxs: Vec<usize> = (0..sheet.headers.len()).collect();
     let header = project_names(&sheet.headers, &idxs);
     let rows = collect_rows(&mut sheet, &idxs, cfg.rows)?;
-    write_plain(output, &header, &rows)?;
+    let rendered = table::render(&header, &rows, cfg.width);
+    output.write_all(rendered.as_bytes())?;
     Ok(())
 }
 
@@ -168,46 +172,6 @@ fn collect_rows<R: Read>(
     Ok(rows)
 }
 
-fn write_plain<W: Write>(
-    out: &mut W,
-    header: &[String],
-    rows: &[Vec<String>],
-) -> Result<(), Error> {
-    if header.is_empty() {
-        return Ok(());
-    }
-    writeln!(out, "{}", join_cells(header))?;
-    for row in rows {
-        writeln!(out, "{}", join_cells(row))?;
-    }
-    Ok(())
-}
-
-fn join_cells(cells: &[String]) -> String {
-    let mut line = String::new();
-    for (i, cell) in cells.iter().enumerate() {
-        if i > 0 {
-            line.push_str("  ");
-        }
-        push_sanitized(&mut line, cell);
-    }
-    line
-}
-
-fn push_sanitized(out: &mut String, cell: &str) {
-    if !cell.bytes().any(|b| b < b' ') {
-        out.push_str(cell);
-        return;
-    }
-    for c in cell.chars() {
-        if (c as u32) < 0x20 {
-            out.push(' ');
-        } else {
-            out.push(c);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -225,15 +189,15 @@ mod tests {
     #[test]
     fn reads_a_header_and_rows() {
         let out = preview(b"name,age\nann,3\nbob,4\n", Config::default());
-        assert_eq!(out, "name  age\nann  3\nbob  4\n");
+        assert_eq!(out, "name  age\nann   3\nbob   4\n");
     }
 
     #[test]
     fn sniffs_semicolon_and_tab() {
         let semi = preview(b"name;age\nann;3\n", Config::default());
-        assert_eq!(semi, "name  age\nann  3\n");
+        assert_eq!(semi, "name  age\nann   3\n");
         let tab = preview(b"name\tage\nann\t3\n", Config::default());
-        assert_eq!(tab, "name  age\nann  3\n");
+        assert_eq!(tab, "name  age\nann   3\n");
     }
 
     #[test]
@@ -243,27 +207,27 @@ mod tests {
             ..Config::default()
         };
         let out = preview(b"name|age\nann|3\n", cfg);
-        assert_eq!(out, "name  age\nann  3\n");
+        assert_eq!(out, "name  age\nann   3\n");
     }
 
     #[test]
     fn strips_a_utf8_bom() {
         let data = b"\xEF\xBB\xBFname,age\nann,3\n";
-        assert_eq!(preview(data, Config::default()), "name  age\nann  3\n");
+        assert_eq!(preview(data, Config::default()), "name  age\nann   3\n");
     }
 
     #[test]
     fn quoted_commas_stay_in_the_field() {
         let data = b"name,note\nann,\"hello, world\"\n";
         let out = preview(data, Config::default());
-        assert_eq!(out, "name  note\nann  hello, world\n");
+        assert_eq!(out, "name  note\nann   hello, world\n");
     }
 
     #[test]
     fn newlines_inside_quotes_do_not_break_the_row() {
         let data = b"name,note\nann,\"hello\nworld\"\n";
         let out = preview(data, Config::default());
-        assert_eq!(out, "name  note\nann  hello world\n");
+        assert_eq!(out, "name  note\nann   hello world\n");
     }
 
     #[test]
@@ -283,13 +247,13 @@ mod tests {
             ..Config::default()
         };
         let out = preview(b"ann,3\nbob,4\n", cfg);
-        assert_eq!(out, "1  2\nann  3\nbob  4\n");
+        assert_eq!(out, "1    2\nann  3\nbob  4\n");
     }
 
     #[test]
     fn blank_header_gets_an_index() {
         let out = preview(b"name,,city\nann,x,paris\n", Config::default());
-        assert_eq!(out, "name  2  city\nann  x  paris\n");
+        assert_eq!(out, "name  2  city\nann   x  paris\n");
     }
 
     #[test]

@@ -24,7 +24,7 @@ fn previews_a_file() {
     );
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "name  age\nann  3\n"
+        "name  age\nann   3\n"
     );
 }
 
@@ -51,7 +51,24 @@ fn reads_stdin_when_given_a_dash() {
     );
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "name  age\nann  3\n"
+        "name  age\nann   3\n"
+    );
+}
+
+#[test]
+fn truncates_long_cells_to_the_width() {
+    let path = std::env::temp_dir().join(format!("csv-peek-wide-{}", std::process::id()));
+    std::fs::write(&path, "name,city\nann,a very long city name\n").unwrap();
+    let out = run(&["-w", "16", path.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "name  city\nann   a very lo…\n"
     );
 }
 

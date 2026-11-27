@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -21,6 +21,10 @@ struct Args {
     /// Field delimiter. One ASCII character, or `\t`. Sniffed if omitted.
     #[arg(short, long, value_name = "CHAR", value_parser = parse_delimiter)]
     delimiter: Option<u8>,
+
+    /// Output width in columns. Defaults to the terminal, or 80 if stdout is not one.
+    #[arg(short = 'w', long, value_name = "COLS")]
+    width: Option<usize>,
 
     /// Treat the first row as data, not a header.
     #[arg(long)]
@@ -47,11 +51,26 @@ fn try_main() -> Result<(), Error> {
         rows: args.rows,
         delimiter: args.delimiter,
         has_header: !args.no_header,
+        width: resolve_width(args.width),
     };
     let input = open_input(args.file)?;
     let stdout = io::stdout();
     let mut out = stdout.lock();
     csv_peek::run(input, &mut out, &cfg)
+}
+
+fn resolve_width(flag: Option<usize>) -> usize {
+    if let Some(w) = flag {
+        return w.max(1);
+    }
+    if io::stdout().is_terminal() {
+        if let Some((terminal_size::Width(w), _)) = terminal_size::terminal_size() {
+            if w > 0 {
+                return usize::from(w);
+            }
+        }
+    }
+    80
 }
 
 fn open_input(path: Option<PathBuf>) -> Result<Box<dyn Read>, Error> {
